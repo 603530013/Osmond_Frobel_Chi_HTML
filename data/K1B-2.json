@@ -1,0 +1,17 @@
+{
+  "id": "K1B-2",
+  "words": [
+    { "id": "old",     "char": "老", "icon": "👴",    "color": "bg-indigo-100 text-indigo-600", "label": "老人" },
+    { "id": "teacher", "char": "師", "icon": "🧑‍🏫", "color": "bg-purple-100 text-purple-600", "label": "老師" },
+    { "id": "soil",    "char": "土", "type": "custom-soil", "color": "bg-yellow-200 text-yellow-900", "label": "泥土" },
+    { "id": "person",  "char": "人", "icon": "🚶",    "color": "bg-teal-100 text-teal-600",     "label": "人類" },
+    { "id": "sleep",   "char": "睡", "icon": "🛌",    "color": "bg-blue-200 text-blue-800",     "label": "睡美人" },
+    { "id": "circle",  "char": "圓", "icon": "⭕",    "color": "bg-red-100 text-red-600",       "label": "圓形" },
+    { "id": "grass",   "char": "草", "icon": "🌿",    "color": "bg-green-100 text-green-700",   "label": "草地" },
+    { "id": "rice",    "char": "飯", "icon": "🍚",    "color": "bg-stone-100 text-stone-700",   "label": "吃飯" },
+    { "id": "pudding", "char": "布", "icon": "🍮",    "color": "bg-yellow-100 text-yellow-700", "label": "布丁" },
+    { "id": "trophy",  "char": "杯", "icon": "🏆",    "color": "bg-amber-100 text-amber-600",   "label": "獎杯" },
+    { "id": "bird",    "char": "鳥", "icon": "🐦",    "color": "bg-sky-100 text-sky-700",       "label": "小鳥" },
+    { "id": "crow",    "char": "烏", "icon": "🐦‍⬛", "color": "bg-zinc-200 text-zinc-800",     "label": "烏鴉" }
+  ]
+}

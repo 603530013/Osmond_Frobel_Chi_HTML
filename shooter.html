@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-TW" data-v="focus-shoot">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>寶寶識字連連看 - 打幽靈</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <link rel="stylesheet" href="shared/styles.css">
+</head>
+<body class="bg-slate-50 font-sans select-none">
+
+  <div id="root"></div>
+
+  <script type="text/plain" id="app-src">
+    const { useState, useEffect, useRef, useReducer } = React;
+
+    const App = () => {
+      const setup = useGameSetup();
+      const { wordSets, selectedSets, toggleSet, questionCount, setQuestionCount,
+              totalAvailableWords, buildPool, loadingSets } = setup;
+
+      const [gameState, setGameState] = useState('intro');
+      const [level, setLevel] = useState(0);
+      const [attempts, setAttempts] = useState({ correct: 0, total: 0 });
+
+      const [, forceShooterRender] = useReducer(x => x + 1, 0);
+      const shooterRef = useRef({
+        fighterX: 50,
+        ghosts: [],
+        bullets: [],
+        heart: null,
+        lives: 5,
+        level: 0,
+        currentTarget: null,
+        pool: [],
+        allAvailableWords: [],
+        roundStartTime: 0,
+        gameStartTime: 0,
+        lastShootTime: 0,
+        lastHeartTime: 0,
+        nextId: 1,
+        roundActive: false,
+        gameActive: false,
+        focused: false,
+        feedback: null,
+      });
+      const shooterContainerRef = useRef(null);
+
+      const startGame = () => {
+        if (selectedSets.length === 0 || questionCount <= 0) return;
+        const pool = buildPool();
+        setAttempts({ correct: 0, total: 0 });
+
+        const ref = shooterRef.current;
+        let allAvailable = [];
+        selectedSets.forEach(setId => {
+          allAvailable = [...allAvailable, ...(wordSets[setId] || [])];
+        });
+        ref.pool = pool;
+        ref.allAvailableWords = allAvailable;
+        ref.fighterX = 50;
+        ref.ghosts = [];
+        ref.bullets = [];
+        ref.heart = null;
+        ref.lives = 5;
+        ref.level = 0;
+        ref.gameStartTime = performance.now();
+        ref.lastShootTime = performance.now();
+        ref.lastHeartTime = performance.now();
+        ref.nextId = 1;
+        ref.feedback = null;
+        ref.focused = false;
+        ref.gameActive = true;
+        setLevel(0);
+        setGameState('playing');
+        startShooterRound(0);
+      };
+
+      const startShooterRound = (lvlIndex) => {
+        const ref = shooterRef.current;
+        if (!ref.gameActive) return;
+        if (lvlIndex >= ref.pool.length) {
+          setGameState('finished');
+          ref.gameActive = false;
+          return;
+        }
+
+        const target = ref.pool[lvlIndex];
+        const distractors = shuffleArray(ref.allAvailableWords.filter(w => w.id !== target.id)).slice(0, 4);
+        const ghostCandidates = shuffleArray([target, ...distractors]);
+
+        const positions = shuffleArray([14, 32, 50, 68, 86]);
+        ref.ghosts = ghostCandidates.map((candidate, i) => ({
+          id: ref.nextId++,
+          char: candidate.char,
+          isTarget: candidate.id === target.id,
+          x: positions[i] + (Math.random() * 6 - 3),
+          baseX: positions[i],
+          y: -8 - i * 2,
+          wobble: Math.random() * Math.PI * 2,
+          wobbleSpeed: 0.03 + Math.random() * 0.03,
+        }));
+        ref.bullets = [];
+        ref.roundStartTime = performance.now();
+        ref.roundActive = true;
+        ref.currentTarget = target;
+        ref.feedback = null;
+        ref.level = lvlIndex;
+
+        setLevel(lvlIndex);
+        forceShooterRender();
+
+        setTimeout(() => {
+          if (shooterRef.current.gameActive) speakText(`${target.label} 的 ${target.char}`);
+        }, 300);
+      };
+
+      const playShooterAudio = () => {
+        const target = shooterRef.current.currentTarget;
+        if (target) speakText(`${target.label} 的 ${target.char}`);
+      };
+
+      const handleShooterMove = (e) => {
+        const container = shooterContainerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const clientX = e.touches?.[0]?.clientX ?? e.clientX;
+        if (clientX == null) return;
+        const x = ((clientX - rect.left) / rect.width) * 100;
+        shooterRef.current.fighterX = Math.max(5, Math.min(95, x));
+      };
+
+      // 設定 focus 狀態：進入時重設射擊計時器，讓第一發要等 2 秒才出現，
+      // 給玩家時間移動戰鬥機瞄準。
+      const setShooterFocus = (focused) => {
+        const ref = shooterRef.current;
+        if (ref.focused === focused) return;
+        ref.focused = focused;
+        if (focused) {
+          ref.lastShootTime = performance.now();
+        }
+        forceShooterRender();
+      };
+
+      useEffect(() => {
+        if (gameState !== 'playing') return;
+
+        let rafId;
+        const loop = () => {
+          const ref = shooterRef.current;
+          if (!ref.gameActive) {
+            rafId = requestAnimationFrame(loop);
+            return;
+          }
+          const now = performance.now();
+
+          ref.bullets.forEach(b => { b.y -= 2.3; });
+          ref.bullets = ref.bullets.filter(b => b.y > -5);
+
+          if (ref.roundActive) {
+            const roundElapsed = now - ref.roundStartTime;
+            const baseProgress = roundElapsed / 10000;
+            ref.ghosts.forEach((g, i) => {
+              const startOffset = i * 2;
+              g.y = baseProgress * 90 - 8 + startOffset;
+              g.wobble += g.wobbleSpeed;
+              g.x = g.baseX + Math.sin(g.wobble) * 3;
+            });
+          }
+
+          // 只有「focus」(滑鼠進入 / 手指按住遊戲區) 後才發射砲彈，
+          // 給玩家時間移動戰鬥機瞄準目標。
+          if (ref.roundActive && ref.focused && now - ref.lastShootTime >= 2000) {
+            ref.bullets.push({
+              id: ref.nextId++,
+              x: ref.fighterX,
+              y: 86
+            });
+            ref.lastShootTime = now;
+          }
+
+          if (now - ref.lastHeartTime >= 30000 && !ref.heart) {
+            ref.heart = {
+              id: ref.nextId++,
+              x: -6,
+              y: 20 + Math.random() * 25,
+              startTime: now
+            };
+            ref.lastHeartTime = now;
+          }
+
+          if (ref.heart) {
+            const heartElapsed = now - ref.heart.startTime;
+            if (heartElapsed > 5000) {
+              ref.heart = null;
+            } else {
+              ref.heart.x = (heartElapsed / 5000) * 115 - 7;
+            }
+          }
+
+          const hitBullets = new Set();
+          const hitGhosts = new Set();
+          let targetHit = false;
+          let wrongHit = false;
+
+          ref.bullets.forEach(b => {
+            ref.ghosts.forEach(g => {
+              if (hitBullets.has(b.id) || hitGhosts.has(g.id)) return;
+              const dx = Math.abs(b.x - g.x);
+              const dy = Math.abs(b.y - g.y);
+              if (dx < 6 && dy < 7 && g.y > -2 && g.y < 92) {
+                hitBullets.add(b.id);
+                hitGhosts.add(g.id);
+                if (g.isTarget) targetHit = true;
+                else wrongHit = true;
+              }
+            });
+          });
+
+          let heartCollected = false;
+          if (ref.heart) {
+            ref.bullets.forEach(b => {
+              if (hitBullets.has(b.id)) return;
+              const dx = Math.abs(b.x - ref.heart.x);
+              const dy = Math.abs(b.y - ref.heart.y);
+              if (dx < 5 && dy < 7) {
+                hitBullets.add(b.id);
+                heartCollected = true;
+              }
+            });
+          }
+
+          if (heartCollected) {
+            ref.heart = null;
+            ref.lives += 1;
+          }
+
+          ref.bullets = ref.bullets.filter(b => !hitBullets.has(b.id));
+          ref.ghosts = ref.ghosts.filter(g => !hitGhosts.has(g.id));
+
+          if (wrongHit && ref.roundActive && !targetHit) {
+            ref.lives -= 1;
+            ref.feedback = 'wrong';
+            speakText("射錯了！");
+            if (ref.lives <= 0) {
+              ref.roundActive = false;
+              setAttempts(prev => ({ ...prev, total: prev.total + 1 }));
+              setTimeout(() => {
+                if (shooterRef.current.gameActive) {
+                  shooterRef.current.gameActive = false;
+                  setGameState('failed');
+                }
+              }, 1000);
+            } else {
+              setTimeout(() => {
+                if (shooterRef.current.gameActive && shooterRef.current.feedback === 'wrong') {
+                  shooterRef.current.feedback = null;
+                }
+              }, 800);
+            }
+          }
+
+          if (targetHit && ref.roundActive) {
+            ref.roundActive = false;
+            ref.feedback = 'correct';
+            setAttempts(prev => ({ correct: prev.correct + 1, total: prev.total + 1 }));
+            speakText("答對了！");
+            const nextLvl = ref.level + 1;
+            setTimeout(() => {
+              if (shooterRef.current.gameActive) startShooterRound(nextLvl);
+            }, 1500);
+          }
+
+          if (ref.roundActive) {
+            const roundElapsed = now - ref.roundStartTime;
+            if (roundElapsed > 10500) {
+              ref.roundActive = false;
+              ref.feedback = 'timeout';
+              ref.lives -= 1;
+              setAttempts(prev => ({ ...prev, total: prev.total + 1 }));
+              speakText("時間到囉！");
+              const nextLvl = ref.level + 1;
+              if (ref.lives <= 0) {
+                setTimeout(() => {
+                  if (shooterRef.current.gameActive) {
+                    shooterRef.current.gameActive = false;
+                    setGameState('failed');
+                  }
+                }, 1000);
+              } else {
+                setTimeout(() => {
+                  if (shooterRef.current.gameActive) startShooterRound(nextLvl);
+                }, 1500);
+              }
+            }
+          }
+
+          forceShooterRender();
+          rafId = requestAnimationFrame(loop);
+        };
+
+        rafId = requestAnimationFrame(loop);
+        return () => { cancelAnimationFrame(rafId); };
+      }, [gameState]);
+
+      const goHome = () => {
+        window.speechSynthesis.cancel();
+        shooterRef.current.gameActive = false;
+        window.location.href = 'index.html';
+      };
+
+      const backToIntro = () => {
+        window.speechSynthesis.cancel();
+        shooterRef.current.gameActive = false;
+        setGameState('intro');
+      };
+
+      const { accuracy, stars } = calculateScore(attempts);
+
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-4">
+          <TopNav onBackHome={goHome} />
+
+          <div className="mb-6 text-center mt-8 md:mt-0">
+            <h1 className="text-3xl md:text-4xl font-black text-red-600 mb-2 tracking-wider flex items-center justify-center gap-2">
+              🚀 打幽靈
+              <span className="text-sm bg-red-100 text-red-600 px-2 py-1 rounded-full border border-red-200 flex items-center gap-1">
+                AI 老師版 <Sparkles className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+              </span>
+            </h1>
+            <p className="text-slate-500 text-lg font-medium">
+              {gameState === 'playing'
+                ? `第 ${level + 1} 題 (共 ${shooterRef.current.pool.length} 題)`
+                : '瞄準正確幽靈，射擊取分！'}
+            </p>
+          </div>
+
+          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-xl border-4 border-blue-100 p-6 md:p-10 min-h-[500px] flex flex-col justify-center">
+
+            {loadingSets && (
+              <div className="flex flex-col items-center justify-center h-full">
+                <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+                <p className="text-slate-500 mt-3">題庫載入中...</p>
+              </div>
+            )}
+
+            {!loadingSets && gameState === 'intro' && (
+              <IntroSetup
+                wordSets={wordSets}
+                selectedSets={selectedSets}
+                toggleSet={toggleSet}
+                questionCount={questionCount}
+                setQuestionCount={setQuestionCount}
+                totalAvailableWords={totalAvailableWords}
+                onStart={startGame}
+              />
+            )}
+
+            {gameState === 'finished' && (
+              <FinishedScreen accuracy={accuracy} stars={stars} onRetry={backToIntro} />
+            )}
+
+            {gameState === 'failed' && (
+              <FailedScreen correctCount={attempts.correct} accuracy={accuracy} onRetry={backToIntro} />
+            )}
+
+            {gameState === 'playing' && shooterRef.current.currentTarget && (
+              <div className="flex flex-col items-center justify-center h-full w-full animate-in fade-in duration-500">
+
+                <div className="flex items-center gap-3 mb-3 w-full justify-center flex-wrap">
+                  <button
+                    onClick={playShooterAudio}
+                    className="p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full shadow-md active:scale-95"
+                    title="再聽一次"
+                  >
+                    <Volume2 className="w-5 h-5" />
+                  </button>
+                  <div className="text-base md:text-lg font-bold text-slate-700">
+                    射擊幽靈！
+                  </div>
+                </div>
+
+                <div
+                  ref={shooterContainerRef}
+                  tabIndex={0}
+                  onMouseMove={handleShooterMove}
+                  onMouseEnter={() => setShooterFocus(true)}
+                  onMouseLeave={() => setShooterFocus(false)}
+                  onFocus={() => setShooterFocus(true)}
+                  onBlur={() => setShooterFocus(false)}
+                  onTouchMove={(e) => { e.preventDefault(); handleShooterMove(e); }}
+                  onTouchStart={(e) => { e.preventDefault(); handleShooterMove(e); setShooterFocus(true); }}
+                  onTouchEnd={() => setShooterFocus(false)}
+                  onTouchCancel={() => setShooterFocus(false)}
+                  className="relative w-full h-[420px] md:h-[460px] rounded-2xl overflow-hidden cursor-none border-4 border-slate-800 shadow-inner outline-none focus:ring-4 focus:ring-blue-400"
+                  style={{
+                    touchAction: 'none',
+                    background: 'linear-gradient(180deg, #0f172a 0%, #312e81 35%, #581c87 70%, #1e1b4b 100%)'
+                  }}
+                >
+                  <div className="absolute inset-0 opacity-70 pointer-events-none">
+                    {[...Array(35)].map((_, i) => (
+                      <div key={i} className="absolute bg-white rounded-full animate-pulse"
+                        style={{
+                          left: `${(i * 37) % 100}%`,
+                          top: `${(i * 53) % 100}%`,
+                          width: `${1 + (i % 3)}px`,
+                          height: `${1 + (i % 3)}px`,
+                          animationDelay: `${(i % 10) * 0.2}s`,
+                          opacity: 0.4 + (i % 5) * 0.12,
+                        }} />
+                    ))}
+                  </div>
+
+                  <div className="absolute top-2 right-2 flex items-center gap-0.5 bg-black/40 px-2.5 py-1 rounded-full z-30 backdrop-blur-sm">
+                    {shooterRef.current.lives > 0 ? (
+                      <>
+                        {Array.from({ length: Math.min(shooterRef.current.lives, 6) }).map((_, i) => (
+                          <span key={i} className="text-lg md:text-xl">❤️</span>
+                        ))}
+                        {shooterRef.current.lives > 6 && (
+                          <span className="text-white font-black text-sm ml-1">×{shooterRef.current.lives}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-lg opacity-40">🖤</span>
+                    )}
+                  </div>
+
+                  <div className="absolute top-2 left-2 bg-black/40 px-3 py-1 rounded-full z-30 text-white font-bold text-xs md:text-sm backdrop-blur-sm">
+                    第 {level + 1} / {shooterRef.current.pool.length} 題
+                  </div>
+
+                  {shooterRef.current.ghosts.map(g => (
+                    <div key={g.id}
+                      className="absolute z-20 pointer-events-none"
+                      style={{ left: `${g.x}%`, top: `${g.y}%`, transform: 'translateX(-50%)' }}>
+                      <div className="relative flex flex-col items-center">
+                        <span className="text-5xl md:text-6xl drop-shadow-[0_0_10px_rgba(200,220,255,0.6)]" style={{ filter: 'grayscale(0.2)' }}>👻</span>
+                        <span className="absolute top-3 md:top-4 left-1/2 -translate-x-1/2 text-lg md:text-xl font-black text-slate-900 bg-yellow-200 rounded-full w-8 h-8 md:w-9 md:h-9 flex items-center justify-center border-2 border-yellow-500 shadow-md">
+                          {g.char}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {shooterRef.current.bullets.map(b => (
+                    <div key={b.id}
+                      className="absolute w-2 h-5 rounded-full z-10 pointer-events-none"
+                      style={{
+                        left: `${b.x}%`,
+                        top: `${b.y}%`,
+                        transform: 'translateX(-50%)',
+                        background: 'linear-gradient(180deg, #fff7a0 0%, #facc15 40%, #f97316 100%)',
+                        boxShadow: '0 0 12px rgba(250,204,21,0.9), 0 0 20px rgba(249,115,22,0.5)'
+                      }} />
+                  ))}
+
+                  {shooterRef.current.heart && (
+                    <div className="absolute text-4xl md:text-5xl z-20 pointer-events-none animate-bounce"
+                      style={{
+                        left: `${shooterRef.current.heart.x}%`,
+                        top: `${shooterRef.current.heart.y}%`,
+                        transform: 'translateX(-50%)',
+                        filter: 'drop-shadow(0 0 8px rgba(255,100,150,0.9))'
+                      }}>
+                      💖
+                    </div>
+                  )}
+
+                  <div className="absolute bottom-1 z-20 pointer-events-none transition-[left] duration-75 ease-linear"
+                    style={{ left: `${shooterRef.current.fighterX}%`, transform: 'translateX(-50%)' }}>
+                    <span className="text-5xl md:text-6xl drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]">🚀</span>
+                  </div>
+
+                  {shooterRef.current.feedback === 'correct' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-green-500 text-white text-3xl md:text-4xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-green-300 animate-pulse">
+                        ✓ 答對了！
+                      </div>
+                    </div>
+                  )}
+                  {shooterRef.current.feedback === 'wrong' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-orange-500 text-white text-2xl md:text-3xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-orange-300 animate-pulse">
+                        ✗ 射錯了！-1 ❤️
+                      </div>
+                    </div>
+                  )}
+                  {shooterRef.current.feedback === 'timeout' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-red-500 text-white text-2xl md:text-3xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-red-300 animate-pulse">
+                        💔 漏掉了！
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 未 focus 時的提示：告訴玩家移動滑鼠或按住螢幕才會發射 */}
+                  {!shooterRef.current.focused && !shooterRef.current.feedback && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-black/70 text-white text-lg md:text-xl font-bold px-5 py-3 rounded-2xl shadow-2xl border-2 border-white/30 backdrop-blur-sm text-center">
+                        👆 把滑鼠移進來<br className="md:hidden" />
+                        <span className="hidden md:inline"> / </span>
+                        <span className="md:hidden">（手機：按住畫面）</span>
+                        <span className="hidden md:inline">手指按住螢幕</span>
+                        <br />
+                        <span className="text-sm md:text-base text-yellow-200">才會開始射擊！</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-xs md:text-sm text-slate-500 mt-2 text-center">
+                  👆 滑鼠移入遊戲區（手機按住畫面）才會開始射擊 · 砲彈每 2 秒發射一次 · 射中 💖 補血！
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-8 text-slate-400 text-sm text-center max-w-lg">
+            聽題目後，移動戰鬥機瞄準包含目標字的小幽靈！預設 5 條命，每 30 秒會有 💖 補給從左飛到右。
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+
+  <!-- Bootstrap：抓取 common.js，與上方 app-src 合併後一次編譯注入 -->
+  <script>
+    (async () => {
+      const rootEl = document.getElementById('root');
+      const showErr = (msg) => {
+        rootEl.innerHTML =
+          '<div style="padding:2rem;color:#b91c1c;font-family:sans-serif;max-width:640px;margin:4rem auto;background:#fef2f2;border:2px solid #fecaca;border-radius:12px;">' +
+          '<h2 style="margin:0 0 .75rem 0;">啟動錯誤</h2>' +
+          '<p style="margin:0 0 .75rem 0;">' + msg + '</p>' +
+          '<p style="margin:0;color:#7f1d1d;font-size:.9rem;">請用本機 HTTP 伺服器開啟（例如於資料夾執行 <code>python -m http.server</code> 後訪問 <code>http://localhost:8000/</code>），不要直接用 file:// 雙擊 HTML。</p>' +
+          '</div>';
+      };
+      try {
+        const resp = await fetch('shared/common.js');
+        if (!resp.ok) throw new Error('無法載入 shared/common.js (HTTP ' + resp.status + ')');
+        const commonSrc = await resp.text();
+        const appSrc = document.getElementById('app-src').textContent;
+        const combined = commonSrc + '\n;\n' + appSrc;
+        const { code } = Babel.transform(combined, { presets: ['react'] });
+        const s = document.createElement('script');
+        s.textContent = code;
+        document.head.appendChild(s);
+      } catch (e) {
+        console.error('Bootstrap error:', e);
+        showErr(e.message || String(e));
+      }
+    })();
+  </script>
+</body>
+</html>

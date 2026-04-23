@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>寶寶識字連連看 - 連連看</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <link rel="stylesheet" href="shared/styles.css">
+</head>
+<body class="bg-slate-50 font-sans select-none">
+
+  <div id="root"></div>
+
+  <!-- 連連看主程式 (儲存於 type="text/plain"，由下方 bootstrap 取出後編譯) -->
+  <script type="text/plain" id="app-src">
+    const { useState, useEffect, useRef } = React;
+
+    const App = () => {
+      const setup = useGameSetup();
+      const { wordSets, selectedSets, toggleSet, questionCount, setQuestionCount,
+              totalAvailableWords, buildPool, loadingSets } = setup;
+
+      const [gameState, setGameState] = useState('intro');
+      const [gamePool, setGamePool] = useState([]);
+      const [level, setLevel] = useState(0);
+      const [attempts, setAttempts] = useState({ correct: 0, total: 0 });
+      const [wrongShake, setWrongShake] = useState(null);
+
+      const [currentWords, setCurrentWords] = useState([]);
+      const [rightSideItems, setRightSideItems] = useState([]);
+      const [selection, setSelection] = useState(null);
+      const [matches, setMatches] = useState([]);
+      const [lines, setLines] = useState([]);
+      const [aiLoading, setAiLoading] = useState(null);
+      const [aiResponse, setAiResponse] = useState(null);
+
+      const containerRef = useRef(null);
+      const leftRefs = useRef({});
+      const rightRefs = useRef({});
+
+      const startGame = () => {
+        if (selectedSets.length === 0 || questionCount <= 0) return;
+        const pool = buildPool();
+        setGamePool(pool);
+        setAttempts({ correct: 0, total: 0 });
+        startBasicLevel(0, pool);
+      };
+
+      const startBasicLevel = (lvlIndex, poolOverride) => {
+        const activePool = poolOverride || gamePool;
+        const startIndex = lvlIndex * 4;
+        const items = activePool.slice(startIndex, startIndex + 4);
+        if (items.length === 0) {
+          setGameState('finished');
+          return;
+        }
+        setCurrentWords(items);
+        let rightShuffled = shuffleArray(items);
+        while (rightShuffled.length > 1 && rightShuffled[0].id === items[0].id) {
+          rightShuffled = shuffleArray(items);
+        }
+        setRightSideItems(rightShuffled);
+        setMatches([]);
+        setLines([]);
+        setSelection(null);
+        setLevel(lvlIndex);
+        setGameState('playing');
+        setAiResponse(null);
+      };
+
+      const checkMatch = (leftItem, rightItem) => {
+        if (leftItem.id === rightItem.id) {
+          const newMatch = { leftId: leftItem.id, rightId: rightItem.id };
+          setMatches([...matches, newMatch]);
+          setSelection(null);
+          setAttempts(prev => ({ correct: prev.correct + 1, total: prev.total + 1 }));
+
+          if (matches.length + 1 === currentWords.length) {
+            setTimeout(() => {
+              const maxLevel = Math.ceil(gamePool.length / 4) - 1;
+              if (level < maxLevel) startBasicLevel(level + 1);
+              else setGameState('finished');
+            }, 2000);
+          }
+        } else {
+          setAttempts(prev => ({ ...prev, total: prev.total + 1 }));
+          speakText("答錯囉！再想想");
+          setWrongShake([leftItem.id, rightItem.id]);
+          setTimeout(() => setWrongShake(null), 500);
+          setSelection(null);
+        }
+      };
+
+      const handleLeftClick = (item) => {
+        if (matches.find(m => m.leftId === item.id)) return;
+        if (selection && selection.side === 'right') checkMatch(item, selection.item);
+        else { setSelection({ side: 'left', item }); setWrongShake(null); }
+      };
+
+      const handleRightClick = (item) => {
+        if (matches.find(m => m.rightId === item.id)) return;
+        if (selection && selection.side === 'left') checkMatch(selection.item, item);
+        else { setSelection({ side: 'right', item }); setWrongShake(null); }
+      };
+
+      const handleAIClick = async (e, item) => {
+        e.stopPropagation();
+        setAiLoading(item.id);
+        const sentence = await generateSentenceWithGemini(item.char);
+        setAiResponse(sentence);
+        setAiLoading(null);
+        await speakText(sentence);
+      };
+
+      useEffect(() => {
+        if (gameState !== 'playing') return;
+        const drawLines = () => {
+          const newLines = [];
+          const containerRect = containerRef.current?.getBoundingClientRect();
+          if (!containerRect) return;
+          matches.forEach(match => {
+            const leftEl = leftRefs.current[match.leftId];
+            const rightEl = rightRefs.current[match.rightId];
+            if (leftEl && rightEl) {
+              const leftRect = leftEl.getBoundingClientRect();
+              const rightRect = rightEl.getBoundingClientRect();
+              const x1 = leftRect.right - containerRect.left;
+              const y1 = leftRect.top + leftRect.height / 2 - containerRect.top;
+              const x2 = rightRect.left - containerRect.left;
+              const y2 = rightRect.top + rightRect.height / 2 - containerRect.top;
+              newLines.push({ x1, y1, x2, y2, color: '#22c55e' });
+            }
+          });
+          setLines(newLines);
+        };
+        drawLines();
+        window.addEventListener('resize', drawLines);
+        const timer = setTimeout(drawLines, 100);
+        return () => {
+          window.removeEventListener('resize', drawLines);
+          clearTimeout(timer);
+        };
+      }, [matches, gameState, currentWords, rightSideItems]);
+
+      const goHome = () => {
+        window.speechSynthesis.cancel();
+        window.location.href = 'index.html';
+      };
+
+      const backToIntro = () => {
+        setGameState('intro');
+      };
+
+      const { accuracy, stars } = calculateScore(attempts);
+
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-4">
+          <TopNav onBackHome={goHome} />
+
+          {aiResponse && (
+            <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center" onClick={() => setAiResponse(null)}>
+              <AIBubble text={aiResponse} onClose={() => setAiResponse(null)} />
+            </div>
+          )}
+
+          <div className="mb-6 text-center mt-8 md:mt-0">
+            <h1 className="text-3xl md:text-4xl font-black text-blue-600 mb-2 tracking-wider flex items-center justify-center gap-2">
+              🧩 連連看
+              <span className="text-sm bg-blue-100 text-blue-600 px-2 py-1 rounded-full border border-blue-200 flex items-center gap-1">
+                AI 老師版 <Sparkles className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+              </span>
+            </h1>
+            <p className="text-slate-500 text-lg font-medium">
+              {gameState === 'playing'
+                ? `第 ${level + 1} 關 (共 ${Math.ceil(gamePool.length / 4)} 關)`
+                : '快樂學習認字'}
+            </p>
+          </div>
+
+          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-xl border-4 border-blue-100 p-6 md:p-10 min-h-[500px] flex flex-col justify-center">
+
+            {loadingSets && (
+              <div className="flex flex-col items-center justify-center h-full">
+                <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+                <p className="text-slate-500 mt-3">題庫載入中...</p>
+              </div>
+            )}
+
+            {!loadingSets && gameState === 'intro' && (
+              <IntroSetup
+                wordSets={wordSets}
+                selectedSets={selectedSets}
+                toggleSet={toggleSet}
+                questionCount={questionCount}
+                setQuestionCount={setQuestionCount}
+                totalAvailableWords={totalAvailableWords}
+                onStart={startGame}
+              />
+            )}
+
+            {gameState === 'finished' && (
+              <FinishedScreen accuracy={accuracy} stars={stars} onRetry={backToIntro} />
+            )}
+
+            {gameState === 'playing' && (
+              <div className="relative w-full h-full flex justify-between items-stretch" ref={containerRef}>
+                <svg className="absolute top-0 left-0 w-full h-full pointer-events-none z-10 overflow-visible">
+                  {lines.map((line, i) => (
+                    <line key={i}
+                      x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2}
+                      stroke={line.color} strokeWidth="6" strokeLinecap="round"
+                      className="drop-shadow-sm transition-all duration-500 ease-out" />
+                  ))}
+                </svg>
+
+                <div className="flex flex-col justify-between w-1/3 z-20 space-y-4">
+                  {currentWords.map((item) => {
+                    const isMatched = matches.find(m => m.leftId === item.id);
+                    const isSelected = selection?.side === 'left' && selection.item.id === item.id;
+                    const isShake = wrongShake?.includes(item.id);
+                    const isLoading = aiLoading === item.id;
+
+                    return (
+                      <div key={item.id} className="relative h-24">
+                        <button
+                          ref={el => leftRefs.current[item.id] = el}
+                          onClick={() => handleLeftClick(item)}
+                          disabled={!!isMatched}
+                          className={`
+                            w-full h-full rounded-2xl border-4 transition-all duration-300 transform
+                            flex items-center justify-center shadow-sm
+                            ${isMatched
+                              ? 'bg-green-100 border-green-400 opacity-100'
+                              : isSelected
+                                ? 'bg-blue-50 border-blue-500 scale-105 shadow-lg ring-4 ring-blue-200'
+                                : 'bg-white border-slate-200 hover:border-blue-300 active:scale-95'}
+                            ${isShake ? 'animate-shake border-red-400 bg-red-50' : ''}
+                          `}
+                        >
+                          <span className="text-5xl md:text-6xl font-black text-slate-800">{item.char}</span>
+                        </button>
+
+                        {isMatched && (
+                          <button
+                            onClick={(e) => handleAIClick(e, item)}
+                            disabled={isLoading}
+                            className="absolute -top-3 -right-3 w-10 h-10 bg-yellow-400 hover:bg-yellow-500 text-white rounded-full flex items-center justify-center shadow-lg transform hover:scale-110 transition-all z-30 ring-2 ring-white"
+                            title="聽 AI 老師造句"
+                          >
+                            {isLoading
+                              ? <Loader2 className="w-5 h-5 animate-spin text-white" />
+                              : <Sparkles className="w-5 h-5 text-white fill-current" />}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex flex-col justify-between w-1/3 z-20 space-y-4">
+                  {rightSideItems.map((item) => {
+                    const isMatched = matches.find(m => m.rightId === item.id);
+                    const isSelected = selection?.side === 'right' && selection.item.id === item.id;
+                    const isShake = wrongShake?.includes(item.id);
+
+                    return (
+                      <button
+                        key={item.id}
+                        ref={el => rightRefs.current[item.id] = el}
+                        onClick={() => handleRightClick(item)}
+                        disabled={!!isMatched}
+                        className={`
+                          relative h-24 rounded-2xl border-4 transition-all duration-300 transform
+                          flex items-center justify-center shadow-sm overflow-hidden
+                          ${isMatched
+                            ? 'bg-green-50 border-green-400 opacity-80 scale-95'
+                            : isSelected
+                              ? 'bg-blue-50 border-blue-500 scale-105 shadow-lg ring-4 ring-blue-200'
+                              : 'bg-white border-slate-200 hover:border-amber-300 active:scale-95'}
+                          ${isShake ? 'animate-shake border-red-400 bg-red-50' : ''}
+                        `}
+                      >
+                        <RightSideVisual item={item} />
+                        <span className="sr-only">{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-8 text-slate-400 text-sm text-center max-w-lg">
+            適合年齡：3-6 歲 | 點擊配對成功的字卡上方的 <Sparkles className="inline w-4 h-4 fill-yellow-400 text-yellow-400" /> 可聽 AI 老師造句喔！
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+
+  <!-- Bootstrap：抓取 common.js，與上方 app-src 合併後一次編譯注入 -->
+  <script>
+    (async () => {
+      const rootEl = document.getElementById('root');
+      const showErr = (msg) => {
+        rootEl.innerHTML =
+          '<div style="padding:2rem;color:#b91c1c;font-family:sans-serif;max-width:640px;margin:4rem auto;background:#fef2f2;border:2px solid #fecaca;border-radius:12px;">' +
+          '<h2 style="margin:0 0 .75rem 0;">啟動錯誤</h2>' +
+          '<p style="margin:0 0 .75rem 0;">' + msg + '</p>' +
+          '<p style="margin:0;color:#7f1d1d;font-size:.9rem;">請用本機 HTTP 伺服器開啟（例如於資料夾執行 <code>python -m http.server</code> 後訪問 <code>http://localhost:8000/</code>），不要直接用 file:// 雙擊 HTML。</p>' +
+          '</div>';
+      };
+      try {
+        const resp = await fetch('shared/common.js');
+        if (!resp.ok) throw new Error('無法載入 shared/common.js (HTTP ' + resp.status + ')');
+        const commonSrc = await resp.text();
+        const appSrc = document.getElementById('app-src').textContent;
+        const combined = commonSrc + '\n;\n' + appSrc;
+        const { code } = Babel.transform(combined, { presets: ['react'] });
+        const s = document.createElement('script');
+        s.textContent = code;
+        document.head.appendChild(s);
+      } catch (e) {
+        console.error('Bootstrap error:', e);
+        showErr(e.message || String(e));
+      }
+    })();
+  </script>
+</body>
+</html>

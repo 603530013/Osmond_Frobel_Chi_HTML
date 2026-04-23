@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>寶寶識字連連看 - 聽音辨字</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <link rel="stylesheet" href="shared/styles.css">
+</head>
+<body class="bg-slate-50 font-sans select-none">
+
+  <div id="root"></div>
+
+  <script type="text/plain" id="app-src">
+    const { useState, useEffect } = React;
+
+    const App = () => {
+      const setup = useGameSetup();
+      const { wordSets, selectedSets, toggleSet, questionCount, setQuestionCount,
+              totalAvailableWords, buildPool, loadingSets } = setup;
+
+      const [gameState, setGameState] = useState('intro');
+      const [gamePool, setGamePool] = useState([]);
+      const [level, setLevel] = useState(0);
+      const [attempts, setAttempts] = useState({ correct: 0, total: 0 });
+      const [wrongShake, setWrongShake] = useState(null);
+
+      const [advTarget, setAdvTarget] = useState(null);
+      const [advOptions, setAdvOptions] = useState([]);
+      const [advCorrect, setAdvCorrect] = useState(false);
+
+      const startGame = () => {
+        if (selectedSets.length === 0 || questionCount <= 0) return;
+        const pool = buildPool();
+        setGamePool(pool);
+        setAttempts({ correct: 0, total: 0 });
+        startAdvancedLevel(0, pool);
+      };
+
+      const startAdvancedLevel = (lvlIndex, poolOverride) => {
+        const activePool = poolOverride || gamePool;
+        if (lvlIndex >= activePool.length) {
+          setGameState('finished');
+          return;
+        }
+        const target = activePool[lvlIndex];
+
+        let allAvailable = [];
+        selectedSets.forEach(setId => {
+          allAvailable = [...allAvailable, ...(wordSets[setId] || [])];
+        });
+        const distractors = shuffleArray(allAvailable.filter(w => w.id !== target.id)).slice(0, 3);
+        const options = shuffleArray([target, ...distractors]);
+
+        setAdvTarget(target);
+        setAdvOptions(options);
+        setLevel(lvlIndex);
+        setAdvCorrect(false);
+        setGameState('playing');
+
+        setTimeout(() => playAdvancedAudio(target), 300);
+      };
+
+      const playAdvancedAudio = (target) => {
+        if (target) speakText(`${target.label} 的 ${target.char}`);
+      };
+
+      const handleAdvancedClick = (item) => {
+        if (advCorrect) return;
+        if (item.id === advTarget.id) {
+          setAttempts(prev => ({ correct: prev.correct + 1, total: prev.total + 1 }));
+          setAdvCorrect(true);
+          speakText("答對了！");
+          setTimeout(() => { startAdvancedLevel(level + 1); }, 1500);
+        } else {
+          setAttempts(prev => ({ ...prev, total: prev.total + 1 }));
+          speakText("答錯囉！再想想");
+          setWrongShake([item.id]);
+          setTimeout(() => setWrongShake(null), 500);
+        }
+      };
+
+      const goHome = () => {
+        window.speechSynthesis.cancel();
+        window.location.href = 'index.html';
+      };
+
+      const backToIntro = () => {
+        window.speechSynthesis.cancel();
+        setGameState('intro');
+      };
+
+      const { accuracy, stars } = calculateScore(attempts);
+
+      return (
+        <div className="min-h-screen flex flex-col items-center justify-center p-4">
+          <TopNav onBackHome={goHome} />
+
+          <div className="mb-6 text-center mt-8 md:mt-0">
+            <h1 className="text-3xl md:text-4xl font-black text-blue-600 mb-2 tracking-wider flex items-center justify-center gap-2">
+              👂 聽音辨字
+              <span className="text-sm bg-blue-100 text-blue-600 px-2 py-1 rounded-full border border-blue-200 flex items-center gap-1">
+                AI 老師版 <Sparkles className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+              </span>
+            </h1>
+            <p className="text-slate-500 text-lg font-medium">
+              {gameState === 'playing'
+                ? `第 ${level + 1} 題 (共 ${gamePool.length} 題)`
+                : '聽詞語，選出正確的字'}
+            </p>
+          </div>
+
+          <div className="relative w-full max-w-2xl bg-white rounded-3xl shadow-xl border-4 border-blue-100 p-6 md:p-10 min-h-[500px] flex flex-col justify-center">
+
+            {loadingSets && (
+              <div className="flex flex-col items-center justify-center h-full">
+                <Loader2 className="w-12 h-12 text-blue-500 animate-spin" />
+                <p className="text-slate-500 mt-3">題庫載入中...</p>
+              </div>
+            )}
+
+            {!loadingSets && gameState === 'intro' && (
+              <IntroSetup
+                wordSets={wordSets}
+                selectedSets={selectedSets}
+                toggleSet={toggleSet}
+                questionCount={questionCount}
+                setQuestionCount={setQuestionCount}
+                totalAvailableWords={totalAvailableWords}
+                onStart={startGame}
+              />
+            )}
+
+            {gameState === 'finished' && (
+              <FinishedScreen accuracy={accuracy} stars={stars} onRetry={backToIntro} />
+            )}
+
+            {gameState === 'playing' && advTarget && (
+              <div className="flex flex-col items-center justify-center h-full space-y-8 w-full animate-in fade-in duration-500">
+                <button
+                  onClick={() => playAdvancedAudio(advTarget)}
+                  className="flex flex-col items-center justify-center p-6 bg-blue-50 text-blue-500 hover:bg-blue-100 hover:text-blue-600 rounded-full border-4 border-blue-200 transition-all active:scale-95 shadow-md group"
+                >
+                  <Volume2 className="w-20 h-20 md:w-24 md:h-24 group-hover:scale-110 transition-transform" />
+                  <span className="text-xl font-bold mt-2">再聽一次</span>
+                </button>
+
+                <div className="grid grid-cols-2 gap-4 md:gap-6 w-full max-w-md">
+                  {advOptions.map(item => {
+                    const isTarget = item.id === advTarget.id;
+                    const isShake = wrongShake?.includes(item.id);
+                    const showCorrect = advCorrect && isTarget;
+
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => handleAdvancedClick(item)}
+                        className={`h-32 md:h-40 text-6xl md:text-7xl font-black rounded-3xl border-4 flex items-center justify-center transition-all duration-300
+                          ${showCorrect
+                            ? 'bg-green-100 border-green-500 text-green-700 scale-105 shadow-xl ring-4 ring-green-200'
+                            : 'bg-white border-slate-200 text-slate-800 shadow-sm hover:border-blue-300 hover:shadow-md active:scale-95'}
+                          ${isShake ? 'animate-shake border-red-400 bg-red-50 text-red-700' : ''}
+                        `}
+                      >
+                        {item.char}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-8 text-slate-400 text-sm text-center max-w-lg">
+            打開設備音量，聽聽看系統念出的詞語，並選出正確的國字！
+          </div>
+        </div>
+      );
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+
+  <!-- Bootstrap：抓取 common.js，與上方 app-src 合併後一次編譯注入 -->
+  <script>
+    (async () => {
+      const rootEl = document.getElementById('root');
+      const showErr = (msg) => {
+        rootEl.innerHTML =
+          '<div style="padding:2rem;color:#b91c1c;font-family:sans-serif;max-width:640px;margin:4rem auto;background:#fef2f2;border:2px solid #fecaca;border-radius:12px;">' +
+          '<h2 style="margin:0 0 .75rem 0;">啟動錯誤</h2>' +
+          '<p style="margin:0 0 .75rem 0;">' + msg + '</p>' +
+          '<p style="margin:0;color:#7f1d1d;font-size:.9rem;">請用本機 HTTP 伺服器開啟（例如於資料夾執行 <code>python -m http.server</code> 後訪問 <code>http://localhost:8000/</code>），不要直接用 file:// 雙擊 HTML。</p>' +
+          '</div>';
+      };
+      try {
+        const resp = await fetch('shared/common.js');
+        if (!resp.ok) throw new Error('無法載入 shared/common.js (HTTP ' + resp.status + ')');
+        const commonSrc = await resp.text();
+        const appSrc = document.getElementById('app-src').textContent;
+        const combined = commonSrc + '\n;\n' + appSrc;
+        const { code } = Babel.transform(combined, { presets: ['react'] });
+        const s = document.createElement('script');
+        s.textContent = code;
+        document.head.appendChild(s);
+      } catch (e) {
+        console.error('Bootstrap error:', e);
+        showErr(e.message || String(e));
+      }
+    })();
+  </script>
+</body>
+</html>
