@@ -33,7 +33,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
+    const { useState, useEffect, useRef, useReducer } = React;
 
     // --- 圖示元件 ---
     const Play = ({className, fill="none"}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>;
@@ -247,6 +247,29 @@
       const [advOptions, setAdvOptions] = useState([]);
       const [advCorrect, setAdvCorrect] = useState(false);
 
+      // 射擊打幽靈模式狀態 (以 ref 儲存，以 tick 觸發重繪)
+      const [, forceShooterRender] = useReducer(x => x + 1, 0);
+      const shooterRef = useRef({
+        fighterX: 50,
+        ghosts: [],
+        bullets: [],
+        heart: null,
+        lives: 5,
+        level: 0,
+        currentTarget: null,
+        pool: [],
+        allAvailableWords: [],
+        roundStartTime: 0,
+        gameStartTime: 0,
+        lastShootTime: 0,
+        lastHeartTime: 0,
+        nextId: 1,
+        roundActive: false,
+        gameActive: false,
+        feedback: null,
+      });
+      const shooterContainerRef = useRef(null);
+
       const totalAvailableWords = selectedSets.reduce((sum, setId) => sum + WORD_SETS[setId].length, 0);
 
       useEffect(() => {
@@ -290,8 +313,10 @@
 
         if (gameMode === 'basic') {
           startBasicLevel(0, shuffledPool);
-        } else {
+        } else if (gameMode === 'advanced') {
           startAdvancedLevel(0, shuffledPool);
+        } else if (gameMode === 'shooter') {
+          startShooterMode(shuffledPool);
         }
       };
 
@@ -450,7 +475,235 @@
           setTimeout(() => setWrongShake(null), 500);
         }
       };
-      
+
+      // ================= 射擊打幽靈模式邏輯 =================
+      const startShooterMode = (pool) => {
+        const ref = shooterRef.current;
+        let allAvailable = [];
+        selectedSets.forEach(setId => {
+          allAvailable = [...allAvailable, ...WORD_SETS[setId]];
+        });
+        ref.pool = pool;
+        ref.allAvailableWords = allAvailable;
+        ref.fighterX = 50;
+        ref.ghosts = [];
+        ref.bullets = [];
+        ref.heart = null;
+        ref.lives = 5;
+        ref.level = 0;
+        ref.gameStartTime = performance.now();
+        ref.lastShootTime = performance.now();
+        ref.lastHeartTime = performance.now();
+        ref.nextId = 1;
+        ref.feedback = null;
+        ref.gameActive = true;
+        setLevel(0);
+        setGameState('playing');
+        startShooterRound(0);
+      };
+
+      const startShooterRound = (lvlIndex) => {
+        const ref = shooterRef.current;
+        if (!ref.gameActive) return;
+        if (lvlIndex >= ref.pool.length) {
+          setGameState('finished');
+          ref.gameActive = false;
+          return;
+        }
+
+        const target = ref.pool[lvlIndex];
+        const distractors = shuffleArray(ref.allAvailableWords.filter(w => w.id !== target.id)).slice(0, 4);
+        const ghostCandidates = shuffleArray([target, ...distractors]);
+
+        // 5 個位置均勻分散在水平方向
+        const positions = shuffleArray([14, 32, 50, 68, 86]);
+        ref.ghosts = ghostCandidates.map((candidate, i) => ({
+          id: ref.nextId++,
+          char: candidate.char,
+          isTarget: candidate.id === target.id,
+          x: positions[i] + (Math.random() * 6 - 3),
+          baseX: positions[i],
+          y: -8 - i * 2,
+          wobble: Math.random() * Math.PI * 2,
+          wobbleSpeed: 0.03 + Math.random() * 0.03,
+        }));
+        ref.bullets = [];
+        ref.roundStartTime = performance.now();
+        ref.roundActive = true;
+        ref.currentTarget = target;
+        ref.feedback = null;
+        ref.level = lvlIndex;
+
+        setLevel(lvlIndex);
+        forceShooterRender();
+
+        setTimeout(() => {
+          if (shooterRef.current.gameActive) speakText(`${target.label} 的 ${target.char}`);
+        }, 300);
+      };
+
+      const playShooterAudio = () => {
+        const target = shooterRef.current.currentTarget;
+        if (target) speakText(`${target.label} 的 ${target.char}`);
+      };
+
+      const handleShooterMove = (e) => {
+        const container = shooterContainerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const clientX = e.touches?.[0]?.clientX ?? e.clientX;
+        if (clientX == null) return;
+        const x = ((clientX - rect.left) / rect.width) * 100;
+        shooterRef.current.fighterX = Math.max(5, Math.min(95, x));
+      };
+
+      // 射擊模式主迴圈
+      useEffect(() => {
+        if (gameState !== 'playing' || gameMode !== 'shooter') return;
+
+        let rafId;
+        const loop = () => {
+          const ref = shooterRef.current;
+          if (!ref.gameActive) {
+            rafId = requestAnimationFrame(loop);
+            return;
+          }
+          const now = performance.now();
+
+          // 子彈上升
+          ref.bullets.forEach(b => { b.y -= 2.3; });
+          ref.bullets = ref.bullets.filter(b => b.y > -5);
+
+          // 幽靈下降 (10 秒從 -5 到 ~85)
+          if (ref.roundActive) {
+            const roundElapsed = now - ref.roundStartTime;
+            const baseProgress = roundElapsed / 10000;
+            ref.ghosts.forEach((g, i) => {
+              const startOffset = i * 2;
+              g.y = baseProgress * 90 - 8 + startOffset;
+              g.wobble += g.wobbleSpeed;
+              g.x = g.baseX + Math.sin(g.wobble) * 3;
+            });
+          }
+
+          // 自動射擊 (每 3 秒)
+          if (ref.roundActive && now - ref.lastShootTime >= 3000) {
+            ref.bullets.push({
+              id: ref.nextId++,
+              x: ref.fighterX,
+              y: 86
+            });
+            ref.lastShootTime = now;
+          }
+
+          // 愛心補給 (每 30 秒出現一次)
+          if (now - ref.lastHeartTime >= 30000 && !ref.heart) {
+            ref.heart = {
+              id: ref.nextId++,
+              x: -6,
+              y: 20 + Math.random() * 25,
+              startTime: now
+            };
+            ref.lastHeartTime = now;
+          }
+
+          // 愛心橫越 (5 秒)
+          if (ref.heart) {
+            const heartElapsed = now - ref.heart.startTime;
+            if (heartElapsed > 5000) {
+              ref.heart = null;
+            } else {
+              ref.heart.x = (heartElapsed / 5000) * 115 - 7;
+            }
+          }
+
+          // 碰撞檢測: 子彈 vs 幽靈
+          const hitBullets = new Set();
+          const hitGhosts = new Set();
+          let targetHit = false;
+
+          ref.bullets.forEach(b => {
+            ref.ghosts.forEach(g => {
+              if (hitBullets.has(b.id) || hitGhosts.has(g.id)) return;
+              const dx = Math.abs(b.x - g.x);
+              const dy = Math.abs(b.y - g.y);
+              if (dx < 6 && dy < 7 && g.y > -2 && g.y < 92) {
+                hitBullets.add(b.id);
+                hitGhosts.add(g.id);
+                if (g.isTarget) targetHit = true;
+              }
+            });
+          });
+
+          // 碰撞檢測: 子彈 vs 愛心補給
+          let heartCollected = false;
+          if (ref.heart) {
+            ref.bullets.forEach(b => {
+              if (hitBullets.has(b.id)) return;
+              const dx = Math.abs(b.x - ref.heart.x);
+              const dy = Math.abs(b.y - ref.heart.y);
+              if (dx < 5 && dy < 7) {
+                hitBullets.add(b.id);
+                heartCollected = true;
+              }
+            });
+          }
+
+          if (heartCollected) {
+            ref.heart = null;
+            ref.lives += 1;
+          }
+
+          ref.bullets = ref.bullets.filter(b => !hitBullets.has(b.id));
+          ref.ghosts = ref.ghosts.filter(g => !hitGhosts.has(g.id));
+
+          // 答對 → 進下一題
+          if (targetHit && ref.roundActive) {
+            ref.roundActive = false;
+            ref.feedback = 'correct';
+            setAttempts(prev => ({ correct: prev.correct + 1, total: prev.total + 1 }));
+            speakText("答對了！");
+            const nextLvl = ref.level + 1;
+            setTimeout(() => {
+              if (shooterRef.current.gameActive) startShooterRound(nextLvl);
+            }, 1500);
+          }
+
+          // 時間到 → 扣命
+          if (ref.roundActive) {
+            const roundElapsed = now - ref.roundStartTime;
+            if (roundElapsed > 10500) {
+              ref.roundActive = false;
+              ref.feedback = 'timeout';
+              ref.lives -= 1;
+              setAttempts(prev => ({ ...prev, total: prev.total + 1 }));
+              speakText("時間到囉！");
+              const nextLvl = ref.level + 1;
+              if (ref.lives <= 0) {
+                setTimeout(() => {
+                  if (shooterRef.current.gameActive) {
+                    shooterRef.current.gameActive = false;
+                    setGameState('failed');
+                  }
+                }, 1000);
+              } else {
+                setTimeout(() => {
+                  if (shooterRef.current.gameActive) startShooterRound(nextLvl);
+                }, 1500);
+              }
+            }
+          }
+
+          forceShooterRender();
+          rafId = requestAnimationFrame(loop);
+        };
+
+        rafId = requestAnimationFrame(loop);
+        return () => {
+          cancelAnimationFrame(rafId);
+        };
+      }, [gameState, gameMode]);
+
       // 計算最後得分與星星
       const calculateScore = () => {
         if (attempts.total === 0) return { accuracy: 0, stars: 0 };
@@ -465,7 +718,7 @@
         <div className="min-h-screen flex flex-col items-center justify-center p-4">
           {gameState === 'playing' && (
             <button
-              onClick={() => { window.speechSynthesis.cancel(); setGameState('intro'); }}
+              onClick={() => { window.speechSynthesis.cancel(); shooterRef.current.gameActive = false; setGameState('intro'); }}
               className="absolute top-4 right-4 md:top-8 md:right-8 flex items-center gap-2 bg-slate-200 hover:bg-slate-300 text-slate-700 py-2 px-4 rounded-full font-bold transition-colors z-50 shadow-sm active:scale-95"
             >
               <Home className="w-5 h-5" /> 回首頁
@@ -486,8 +739,12 @@
               </span>
             </h1>
             <p className="text-slate-500 text-lg font-medium">
-              {gameState === 'playing' 
-                ? (gameMode === 'basic' ? `連連看 第 ${level + 1} 關 (共 ${Math.ceil(gamePool.length / 4)} 關)` : `聽音辨字 第 ${level + 1} 題 (共 ${gamePool.length} 題)`) 
+              {gameState === 'playing'
+                ? (gameMode === 'basic'
+                    ? `連連看 第 ${level + 1} 關 (共 ${Math.ceil(gamePool.length / 4)} 關)`
+                    : gameMode === 'advanced'
+                      ? `聽音辨字 第 ${level + 1} 題 (共 ${gamePool.length} 題)`
+                      : `打幽靈 第 ${level + 1} 題 (共 ${gamePool.length} 題)`)
                 : '快樂學習認字'}
             </p>
           </div>
@@ -499,22 +756,30 @@
               <div className="flex flex-col items-center justify-center h-full space-y-5">
                 
                 {/* 遊戲模式選擇 */}
-                <div className="w-full max-w-md bg-slate-100 p-2 rounded-2xl flex gap-2">
-                  <button 
+                <div className="w-full max-w-md bg-slate-100 p-2 rounded-2xl grid grid-cols-3 gap-2">
+                  <button
                     onClick={() => setGameMode('basic')}
-                    className={`flex-1 py-3 px-4 rounded-xl font-bold text-lg transition-all ${
+                    className={`py-3 px-2 rounded-xl font-bold text-sm md:text-base transition-all ${
                       gameMode === 'basic' ? 'bg-white text-blue-600 shadow-md border-2 border-blue-200' : 'text-slate-500 hover:bg-slate-200 border-2 border-transparent'
                     }`}
                   >
-                    🧩 初階：連連看
+                    🧩 連連看
                   </button>
-                  <button 
+                  <button
                     onClick={() => setGameMode('advanced')}
-                    className={`flex-1 py-3 px-4 rounded-xl font-bold text-lg transition-all ${
+                    className={`py-3 px-2 rounded-xl font-bold text-sm md:text-base transition-all ${
                       gameMode === 'advanced' ? 'bg-white text-blue-600 shadow-md border-2 border-blue-200' : 'text-slate-500 hover:bg-slate-200 border-2 border-transparent'
                     }`}
                   >
-                    👂 進階：聽音辨字
+                    👂 聽音辨字
+                  </button>
+                  <button
+                    onClick={() => setGameMode('shooter')}
+                    className={`py-3 px-2 rounded-xl font-bold text-sm md:text-base transition-all ${
+                      gameMode === 'shooter' ? 'bg-white text-red-600 shadow-md border-2 border-red-200' : 'text-slate-500 hover:bg-slate-200 border-2 border-transparent'
+                    }`}
+                  >
+                    🚀 打幽靈
                   </button>
                 </div>
 
@@ -605,11 +870,34 @@
                   </div>
                 </div>
 
-                <button 
-                  onClick={() => { setGameState('intro'); }}
+                <button
+                  onClick={() => { shooterRef.current.gameActive = false; setGameState('intro'); }}
                   className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white text-xl font-bold py-3 px-8 rounded-full shadow-lg mt-4 transition-transform active:scale-95"
                 >
                   <RotateCcw className="w-6 h-6" /> 回首頁選題
+                </button>
+              </div>
+            )}
+
+            {/* 失敗畫面 (射擊模式生命用盡) */}
+            {gameState === 'failed' && (
+              <div className="flex flex-col items-center justify-center h-full space-y-4 text-center">
+                <div className="text-8xl drop-shadow-lg animate-pulse">💔</div>
+                <h2 className="text-4xl font-bold text-red-500">遊戲結束</h2>
+                <p className="text-xl text-slate-600">愛心用完了，再接再厲！</p>
+
+                <div className="bg-slate-50 p-4 rounded-2xl w-full max-w-sm border-2 border-slate-100 my-2 shadow-sm">
+                  <p className="text-lg text-slate-600 mb-1">已打倒目標數</p>
+                  <p className="text-3xl font-black text-blue-500 mb-2">{attempts.correct} <span className="text-lg text-slate-400 font-normal">題</span></p>
+                  <p className="text-lg text-slate-600 mb-1">答對率</p>
+                  <p className="text-2xl font-black text-green-500">{calculateScore().accuracy}%</p>
+                </div>
+
+                <button
+                  onClick={() => { shooterRef.current.gameActive = false; setGameState('intro'); }}
+                  className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white text-xl font-bold py-3 px-8 rounded-full shadow-lg mt-4 transition-transform active:scale-95"
+                >
+                  <RotateCcw className="w-6 h-6" /> 再試一次
                 </button>
               </div>
             )}
@@ -731,16 +1019,16 @@
             {/* 遊戲畫面 - 進階模式 (聽音辨字) */}
             {gameState === 'playing' && gameMode === 'advanced' && advTarget && (
               <div className="flex flex-col items-center justify-center h-full space-y-8 w-full animate-in fade-in duration-500">
-                
+
                 {/* 語音播放按鈕 */}
-                <button 
+                <button
                   onClick={() => playAdvancedAudio(advTarget)}
                   className="flex flex-col items-center justify-center p-6 bg-blue-50 text-blue-500 hover:bg-blue-100 hover:text-blue-600 rounded-full border-4 border-blue-200 transition-all active:scale-95 shadow-md group"
                 >
                   <Volume2 className="w-20 h-20 md:w-24 md:h-24 group-hover:scale-110 transition-transform" />
                   <span className="text-xl font-bold mt-2">再聽一次</span>
                 </button>
-                
+
                 {/* 4選1 字卡 */}
                 <div className="grid grid-cols-2 gap-4 md:gap-6 w-full max-w-md">
                   {advOptions.map(item => {
@@ -749,12 +1037,12 @@
                     const showCorrect = advCorrect && isTarget;
 
                     return (
-                      <button 
+                      <button
                         key={item.id}
                         onClick={() => handleAdvancedClick(item)}
                         className={`h-32 md:h-40 text-6xl md:text-7xl font-black rounded-3xl border-4 flex items-center justify-center transition-all duration-300
-                          ${showCorrect 
-                            ? 'bg-green-100 border-green-500 text-green-700 scale-105 shadow-xl ring-4 ring-green-200' 
+                          ${showCorrect
+                            ? 'bg-green-100 border-green-500 text-green-700 scale-105 shadow-xl ring-4 ring-green-200'
                             : 'bg-white border-slate-200 text-slate-800 shadow-sm hover:border-blue-300 hover:shadow-md active:scale-95'
                           }
                           ${isShake ? 'animate-shake border-red-400 bg-red-50 text-red-700' : ''}
@@ -769,13 +1057,157 @@
               </div>
             )}
 
+            {/* 遊戲畫面 - 射擊模式 (打幽靈) */}
+            {gameState === 'playing' && gameMode === 'shooter' && shooterRef.current.currentTarget && (
+              <div className="flex flex-col items-center justify-center h-full w-full animate-in fade-in duration-500">
+
+                {/* 題目顯示 */}
+                <div className="flex items-center gap-3 mb-3 w-full justify-center flex-wrap">
+                  <button
+                    onClick={playShooterAudio}
+                    className="p-2 bg-blue-500 hover:bg-blue-600 text-white rounded-full shadow-md active:scale-95"
+                    title="再聽一次"
+                  >
+                    <Volume2 className="w-5 h-5" />
+                  </button>
+                  <div className="text-base md:text-lg font-bold text-slate-700">
+                    射擊含 <span className="inline-block text-red-600 text-2xl md:text-3xl mx-1 align-middle bg-yellow-100 rounded-lg px-2 border-2 border-yellow-300">{shooterRef.current.currentTarget.char}</span> 的幽靈！
+                  </div>
+                </div>
+
+                {/* 遊戲區域 */}
+                <div
+                  ref={shooterContainerRef}
+                  onMouseMove={handleShooterMove}
+                  onTouchMove={(e) => { e.preventDefault(); handleShooterMove(e); }}
+                  onTouchStart={(e) => { e.preventDefault(); handleShooterMove(e); }}
+                  className="relative w-full h-[420px] md:h-[460px] rounded-2xl overflow-hidden cursor-none border-4 border-slate-800 shadow-inner"
+                  style={{
+                    touchAction: 'none',
+                    background: 'linear-gradient(180deg, #0f172a 0%, #312e81 35%, #581c87 70%, #1e1b4b 100%)'
+                  }}
+                >
+                  {/* 星空背景 */}
+                  <div className="absolute inset-0 opacity-70 pointer-events-none">
+                    {[...Array(35)].map((_, i) => (
+                      <div key={i} className="absolute bg-white rounded-full animate-pulse"
+                           style={{
+                             left: `${(i * 37) % 100}%`,
+                             top: `${(i * 53) % 100}%`,
+                             width: `${1 + (i % 3)}px`,
+                             height: `${1 + (i % 3)}px`,
+                             animationDelay: `${(i % 10) * 0.2}s`,
+                             opacity: 0.4 + (i % 5) * 0.12,
+                           }} />
+                    ))}
+                  </div>
+
+                  {/* 愛心數 (右上角) */}
+                  <div className="absolute top-2 right-2 flex items-center gap-0.5 bg-black/40 px-2.5 py-1 rounded-full z-30 backdrop-blur-sm">
+                    {shooterRef.current.lives > 0 ? (
+                      <>
+                        {Array.from({length: Math.min(shooterRef.current.lives, 6)}).map((_, i) => (
+                          <span key={i} className="text-lg md:text-xl">❤️</span>
+                        ))}
+                        {shooterRef.current.lives > 6 && (
+                          <span className="text-white font-black text-sm ml-1">×{shooterRef.current.lives}</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-lg opacity-40">🖤</span>
+                    )}
+                  </div>
+
+                  {/* 關卡顯示 (左上角) */}
+                  <div className="absolute top-2 left-2 bg-black/40 px-3 py-1 rounded-full z-30 text-white font-bold text-xs md:text-sm backdrop-blur-sm">
+                    第 {level + 1} / {shooterRef.current.pool.length} 題
+                  </div>
+
+                  {/* 幽靈 */}
+                  {shooterRef.current.ghosts.map(g => (
+                    <div key={g.id}
+                         className="absolute z-20 pointer-events-none"
+                         style={{
+                           left: `${g.x}%`,
+                           top: `${g.y}%`,
+                           transform: 'translateX(-50%)'
+                         }}>
+                      <div className="relative flex flex-col items-center">
+                        <span className="text-5xl md:text-6xl drop-shadow-[0_0_10px_rgba(200,220,255,0.6)]" style={{filter: 'grayscale(0.2)'}}>👻</span>
+                        <span className="absolute top-3 md:top-4 left-1/2 -translate-x-1/2 text-lg md:text-xl font-black text-slate-900 bg-yellow-200 rounded-full w-8 h-8 md:w-9 md:h-9 flex items-center justify-center border-2 border-yellow-500 shadow-md">
+                          {g.char}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* 子彈 */}
+                  {shooterRef.current.bullets.map(b => (
+                    <div key={b.id}
+                         className="absolute w-2 h-5 rounded-full z-10 pointer-events-none"
+                         style={{
+                           left: `${b.x}%`,
+                           top: `${b.y}%`,
+                           transform: 'translateX(-50%)',
+                           background: 'linear-gradient(180deg, #fff7a0 0%, #facc15 40%, #f97316 100%)',
+                           boxShadow: '0 0 12px rgba(250,204,21,0.9), 0 0 20px rgba(249,115,22,0.5)'
+                         }} />
+                  ))}
+
+                  {/* 愛心補給 */}
+                  {shooterRef.current.heart && (
+                    <div className="absolute text-4xl md:text-5xl z-20 pointer-events-none animate-bounce"
+                         style={{
+                           left: `${shooterRef.current.heart.x}%`,
+                           top: `${shooterRef.current.heart.y}%`,
+                           transform: 'translateX(-50%)',
+                           filter: 'drop-shadow(0 0 8px rgba(255,100,150,0.9))'
+                         }}>
+                      💖
+                    </div>
+                  )}
+
+                  {/* 戰鬥機 */}
+                  <div className="absolute bottom-1 z-20 pointer-events-none transition-[left] duration-75 ease-linear"
+                       style={{
+                         left: `${shooterRef.current.fighterX}%`,
+                         transform: 'translateX(-50%)'
+                       }}>
+                    <span className="text-5xl md:text-6xl drop-shadow-[0_0_8px_rgba(255,255,255,0.7)]">🚀</span>
+                  </div>
+
+                  {/* 回饋提示 */}
+                  {shooterRef.current.feedback === 'correct' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-green-500 text-white text-3xl md:text-4xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-green-300 animate-pulse">
+                        ✓ 答對了！
+                      </div>
+                    </div>
+                  )}
+                  {shooterRef.current.feedback === 'timeout' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-red-500 text-white text-2xl md:text-3xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-red-300 animate-pulse">
+                        💔 漏掉了！
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-xs md:text-sm text-slate-500 mt-2 text-center">
+                  👆 移動滑鼠／手指控制戰鬥機 · 砲彈每 3 秒自動發射 · 射中 💖 補血！
+                </p>
+              </div>
+            )}
+
           </div>
 
           <div className="mt-8 text-slate-400 text-sm text-center max-w-lg">
             {gameMode === 'basic' ? (
               <span>適合年齡：3-6 歲 | 點擊配對成功的字卡上方的 <Sparkles className="inline w-4 h-4 fill-yellow-400 text-yellow-400"/> 可聽 AI 老師造句喔！</span>
-            ) : (
+            ) : gameMode === 'advanced' ? (
               <span>打開設備音量，聽聽看系統念出的詞語，並選出正確的國字！</span>
+            ) : (
+              <span>聽題目後，移動戰鬥機瞄準包含目標字的小幽靈！預設 5 條命，每 30 秒會有 💖 補給從左飛到右。</span>
             )}
           </div>
         </div>
