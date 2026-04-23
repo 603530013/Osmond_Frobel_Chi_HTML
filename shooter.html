@@ -175,7 +175,7 @@
 
           // 只有「focus」(滑鼠進入 / 手指按住遊戲區) 後才發射砲彈，
           // 給玩家時間移動戰鬥機瞄準目標。
-          if (ref.roundActive && ref.focused && now - ref.lastShootTime >= 2000) {
+          if (ref.roundActive && ref.focused && now - ref.lastShootTime >= 1500) {
             ref.bullets.push({
               id: ref.nextId++,
               x: ref.fighterX,
