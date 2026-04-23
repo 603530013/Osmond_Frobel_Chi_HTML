@@ -54,7 +54,7 @@
     const WORD_SETS = {
       'K1B-1': [
         { id: 'wind', char: '風', icon: '🌬️', color: 'bg-blue-100 text-blue-600', label: '風車' },
-        { id: 'water', char: '水', icon: '🥛', color: 'bg-cyan-100 text-cyan-600', label: '水杯有水' },
+        { id: 'water', char: '水', icon: '🥛', color: 'bg-cyan-100 text-cyan-600', label: '水杯' },
         { id: 'high', char: '高', icon: '👠', color: 'bg-pink-100 text-pink-600', label: '高跟鞋' },
         { id: 'needle', char: '針', icon: '💉', color: 'bg-slate-200 text-slate-600', label: '針筒' },
         { id: 'hand', char: '手', icon: '✋', color: 'bg-amber-100 text-amber-700', label: '手掌' },
@@ -75,7 +75,7 @@
         { id: 'teacher', char: '師', icon: '🧑‍🏫', color: 'bg-purple-100 text-purple-600', label: '老師' },
         { id: 'soil', char: '土', type: 'custom-soil', color: 'bg-yellow-200 text-yellow-900', label: '泥土' },
         { id: 'person', char: '人', icon: '🚶', color: 'bg-teal-100 text-teal-600', label: '人類' },
-        { id: 'sleep', char: '睡', icon: '🛌', color: 'bg-blue-200 text-blue-800', label: '躺在床上睡覺的人' },
+        { id: 'sleep', char: '睡', icon: '🛌', color: 'bg-blue-200 text-blue-800', label: '睡美人' },
         { id: 'circle', char: '圓', icon: '⭕', color: 'bg-red-100 text-red-600', label: '圓形' },
         { id: 'grass', char: '草', icon: '🌿', color: 'bg-green-100 text-green-700', label: '草地' },
         { id: 'rice', char: '飯', icon: '🍚', color: 'bg-stone-100 text-stone-700', label: '吃飯' },
@@ -586,8 +586,8 @@
             });
           }
 
-          // 自動射擊 (每 3 秒)
-          if (ref.roundActive && now - ref.lastShootTime >= 3000) {
+          // 自動射擊 (每 2 秒)
+          if (ref.roundActive && now - ref.lastShootTime >= 2000) {
             ref.bullets.push({
               id: ref.nextId++,
               x: ref.fighterX,
@@ -621,6 +621,7 @@
           const hitBullets = new Set();
           const hitGhosts = new Set();
           let targetHit = false;
+          let wrongHit = false;
 
           ref.bullets.forEach(b => {
             ref.ghosts.forEach(g => {
@@ -631,6 +632,7 @@
                 hitBullets.add(b.id);
                 hitGhosts.add(g.id);
                 if (g.isTarget) targetHit = true;
+                else wrongHit = true;
               }
             });
           });
@@ -656,6 +658,30 @@
 
           ref.bullets = ref.bullets.filter(b => !hitBullets.has(b.id));
           ref.ghosts = ref.ghosts.filter(g => !hitGhosts.has(g.id));
+
+          // 射錯幽靈 → 扣愛心
+          if (wrongHit && ref.roundActive && !targetHit) {
+            ref.lives -= 1;
+            ref.feedback = 'wrong';
+            speakText("射錯了！");
+            if (ref.lives <= 0) {
+              ref.roundActive = false;
+              setAttempts(prev => ({ ...prev, total: prev.total + 1 }));
+              setTimeout(() => {
+                if (shooterRef.current.gameActive) {
+                  shooterRef.current.gameActive = false;
+                  setGameState('failed');
+                }
+              }, 1000);
+            } else {
+              // 短暫顯示提示後繼續本回合
+              setTimeout(() => {
+                if (shooterRef.current.gameActive && shooterRef.current.feedback === 'wrong') {
+                  shooterRef.current.feedback = null;
+                }
+              }, 800);
+            }
+          }
 
           // 答對 → 進下一題
           if (targetHit && ref.roundActive) {
@@ -1071,7 +1097,7 @@
                     <Volume2 className="w-5 h-5" />
                   </button>
                   <div className="text-base md:text-lg font-bold text-slate-700">
-                    射擊含 <span className="inline-block text-red-600 text-2xl md:text-3xl mx-1 align-middle bg-yellow-100 rounded-lg px-2 border-2 border-yellow-300">{shooterRef.current.currentTarget.char}</span> 的幽靈！
+                    射擊幽靈！
                   </div>
                 </div>
 
@@ -1184,6 +1210,13 @@
                       </div>
                     </div>
                   )}
+                  {shooterRef.current.feedback === 'wrong' && (
+                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
+                      <div className="bg-orange-500 text-white text-2xl md:text-3xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-orange-300 animate-pulse">
+                        ✗ 射錯了！-1 ❤️
+                      </div>
+                    </div>
+                  )}
                   {shooterRef.current.feedback === 'timeout' && (
                     <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
                       <div className="bg-red-500 text-white text-2xl md:text-3xl font-black px-6 py-3 rounded-2xl shadow-2xl border-4 border-red-300 animate-pulse">
@@ -1194,7 +1227,7 @@
                 </div>
 
                 <p className="text-xs md:text-sm text-slate-500 mt-2 text-center">
-                  👆 移動滑鼠／手指控制戰鬥機 · 砲彈每 3 秒自動發射 · 射中 💖 補血！
+                  👆 移動滑鼠／手指控制戰鬥機 · 砲彈每 2 秒自動發射 · 射中 💖 補血！
                 </p>
               </div>
             )}
