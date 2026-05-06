@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW" data-v="focus-shoot">
+<html lang="zh-TW" data-v="button-shoot">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -46,7 +46,7 @@
         nextId: 1,
         roundActive: false,
         gameActive: false,
-        focused: false,
+        moveDir: 0,        // -1 = 往左, 0 = 停, 1 = 往右
         feedback: null,
       });
       const shooterContainerRef = useRef(null);
@@ -74,7 +74,7 @@
         ref.lastHeartTime = performance.now();
         ref.nextId = 1;
         ref.feedback = null;
-        ref.focused = false;
+        ref.moveDir = 0;
         ref.gameActive = true;
         setLevel(0);
         setGameState('playing');
@@ -125,25 +125,23 @@
         if (target) speakText(`${target.label} 的 ${target.char}`);
       };
 
-      const handleShooterMove = (e) => {
-        const container = shooterContainerRef.current;
-        if (!container) return;
-        const rect = container.getBoundingClientRect();
-        const clientX = e.touches?.[0]?.clientX ?? e.clientX;
-        if (clientX == null) return;
-        const x = ((clientX - rect.left) / rect.width) * 100;
-        shooterRef.current.fighterX = Math.max(5, Math.min(95, x));
+      // 設定戰鬥機移動方向：-1 (左)、0 (停)、1 (右)，由按鈕的 pointerdown/up 觸發
+      const setMoveDir = (dir) => {
+        shooterRef.current.moveDir = dir;
       };
 
-      // 設定 focus 狀態：進入時重設射擊計時器，讓第一發要等 2 秒才出現，
-      // 給玩家時間移動戰鬥機瞄準。
-      const setShooterFocus = (focused) => {
+      // 按下 FIRE 鈕發射一發砲彈 (簡單冷卻 200ms 防止重複觸發)
+      const fireBullet = () => {
         const ref = shooterRef.current;
-        if (ref.focused === focused) return;
-        ref.focused = focused;
-        if (focused) {
-          ref.lastShootTime = performance.now();
-        }
+        if (!ref.gameActive || !ref.roundActive) return;
+        const now = performance.now();
+        if (now - ref.lastShootTime < 200) return;
+        ref.bullets.push({
+          id: ref.nextId++,
+          x: ref.fighterX,
+          y: 86
+        });
+        ref.lastShootTime = now;
         forceShooterRender();
       };
 
@@ -162,6 +160,11 @@
           ref.bullets.forEach(b => { b.y -= 2.3; });
           ref.bullets = ref.bullets.filter(b => b.y > -5);
 
+          // 依方向按鈕狀態移動戰鬥機
+          if (ref.moveDir !== 0) {
+            ref.fighterX = Math.max(5, Math.min(95, ref.fighterX + ref.moveDir * 0.9));
+          }
+
           if (ref.roundActive) {
             const roundElapsed = now - ref.roundStartTime;
             const baseProgress = roundElapsed / 10000;
@@ -172,17 +175,7 @@
               g.x = g.baseX + Math.sin(g.wobble) * 3;
             });
           }
-
-          // 只有「focus」(滑鼠進入 / 手指按住遊戲區) 後才發射砲彈，
-          // 給玩家時間移動戰鬥機瞄準目標。
-          if (ref.roundActive && ref.focused && now - ref.lastShootTime >= 1500) {
-            ref.bullets.push({
-              id: ref.nextId++,
-              x: ref.fighterX,
-              y: 86
-            });
-            ref.lastShootTime = now;
-          }
+          // (砲彈由 FIRE 按鈕透過 fireBullet() 發射，這裡不再自動射擊)
 
           if (now - ref.lastHeartTime >= 30000 && !ref.heart) {
             ref.heart = {
@@ -387,19 +380,8 @@
 
                 <div
                   ref={shooterContainerRef}
-                  tabIndex={0}
-                  onMouseMove={handleShooterMove}
-                  onMouseEnter={() => setShooterFocus(true)}
-                  onMouseLeave={() => setShooterFocus(false)}
-                  onFocus={() => setShooterFocus(true)}
-                  onBlur={() => setShooterFocus(false)}
-                  onTouchMove={(e) => { e.preventDefault(); handleShooterMove(e); }}
-                  onTouchStart={(e) => { e.preventDefault(); handleShooterMove(e); setShooterFocus(true); }}
-                  onTouchEnd={() => setShooterFocus(false)}
-                  onTouchCancel={() => setShooterFocus(false)}
-                  className="relative w-full h-[420px] md:h-[460px] rounded-2xl overflow-hidden cursor-none border-4 border-slate-800 shadow-inner outline-none focus:ring-4 focus:ring-blue-400"
+                  className="relative w-full h-[420px] md:h-[460px] rounded-2xl overflow-hidden border-4 border-slate-800 shadow-inner"
                   style={{
-                    touchAction: 'none',
                     background: 'linear-gradient(180deg, #0f172a 0%, #312e81 35%, #581c87 70%, #1e1b4b 100%)'
                   }}
                 >
@@ -500,30 +482,58 @@
                     </div>
                   )}
 
-                  {/* 未 focus 時的提示：告訴玩家移動滑鼠或按住螢幕才會發射 */}
-                  {!shooterRef.current.focused && !shooterRef.current.feedback && (
-                    <div className="absolute inset-0 flex items-center justify-center z-40 pointer-events-none">
-                      <div className="bg-black/70 text-white text-lg md:text-xl font-bold px-5 py-3 rounded-2xl shadow-2xl border-2 border-white/30 backdrop-blur-sm text-center">
-                        👆 把滑鼠移進來<br className="md:hidden" />
-                        <span className="hidden md:inline"> / </span>
-                        <span className="md:hidden">（手機：按住畫面）</span>
-                        <span className="hidden md:inline">手指按住螢幕</span>
-                        <br />
-                        <span className="text-sm md:text-base text-yellow-200">才會開始射擊！</span>
-                      </div>
-                    </div>
-                  )}
+                </div>
+
+                {/* 操控面板：左側方向鍵、右側發射鈕 */}
+                <div className="flex justify-between items-center w-full mt-4 gap-3 px-2">
+                  <div className="flex gap-2 md:gap-3">
+                    <button
+                      onPointerDown={(e) => { e.preventDefault(); setMoveDir(-1); }}
+                      onPointerUp={() => setMoveDir(0)}
+                      onPointerLeave={() => setMoveDir(0)}
+                      onPointerCancel={() => setMoveDir(0)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      className="w-16 h-16 md:w-20 md:h-20 bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white rounded-2xl shadow-lg flex items-center justify-center text-3xl md:text-4xl font-black active:scale-95 transition-transform select-none border-b-4 border-blue-700"
+                      style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
+                      aria-label="往左"
+                    >
+                      ⬅
+                    </button>
+                    <button
+                      onPointerDown={(e) => { e.preventDefault(); setMoveDir(1); }}
+                      onPointerUp={() => setMoveDir(0)}
+                      onPointerLeave={() => setMoveDir(0)}
+                      onPointerCancel={() => setMoveDir(0)}
+                      onContextMenu={(e) => e.preventDefault()}
+                      className="w-16 h-16 md:w-20 md:h-20 bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white rounded-2xl shadow-lg flex items-center justify-center text-3xl md:text-4xl font-black active:scale-95 transition-transform select-none border-b-4 border-blue-700"
+                      style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
+                      aria-label="往右"
+                    >
+                      ➡
+                    </button>
+                  </div>
+
+                  <button
+                    onPointerDown={(e) => { e.preventDefault(); fireBullet(); }}
+                    onContextMenu={(e) => e.preventDefault()}
+                    className="w-20 h-20 md:w-24 md:h-24 bg-red-500 hover:bg-red-600 active:bg-red-700 text-white rounded-full shadow-lg flex flex-col items-center justify-center font-black active:scale-95 transition-transform select-none border-b-4 border-red-700"
+                    style={{ touchAction: 'none', WebkitUserSelect: 'none' }}
+                    aria-label="發射"
+                  >
+                    <span className="text-3xl md:text-4xl leading-none">🔥</span>
+                    <span className="text-[10px] md:text-xs mt-1 tracking-wider">FIRE</span>
+                  </button>
                 </div>
 
                 <p className="text-xs md:text-sm text-slate-500 mt-2 text-center">
-                  👆 滑鼠移入遊戲區（手機按住畫面）才會開始射擊 · 砲彈每 2 秒發射一次 · 射中 💖 補血！
+                  ⬅ ➡ 按住可連續移動 · 按 🔥 發射砲彈 · 射中目標字幽靈得分，射中 💖 補血！
                 </p>
               </div>
             )}
           </div>
 
           <div className="mt-8 text-slate-400 text-sm text-center max-w-lg">
-            聽題目後，移動戰鬥機瞄準包含目標字的小幽靈！預設 5 條命，每 30 秒會有 💖 補給從左飛到右。
+            聽題目後，按下方 ⬅ ➡ 移動戰鬥機，按 🔥 射出砲彈打包含目標字的小幽靈！預設 5 條命，每 30 秒會有 💖 補給從左飛到右。
           </div>
         </div>
       );
