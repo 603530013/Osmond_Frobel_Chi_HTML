@@ -130,6 +130,17 @@
         shooterRef.current.moveDir = dir;
       };
 
+      // 直接拖拉遊戲區：手指/滑鼠位置即戰鬥機位置（與左右按鈕並存）
+      const handleShooterDrag = (e) => {
+        const container = shooterContainerRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const clientX = e.touches?.[0]?.clientX ?? e.clientX;
+        if (clientX == null) return;
+        const x = ((clientX - rect.left) / rect.width) * 100;
+        shooterRef.current.fighterX = Math.max(5, Math.min(95, x));
+      };
+
       // 按下 FIRE 鈕發射一發砲彈 (簡單冷卻 200ms 防止重複觸發)
       const fireBullet = () => {
         const ref = shooterRef.current;
@@ -167,7 +178,7 @@
 
           if (ref.roundActive) {
             const roundElapsed = now - ref.roundStartTime;
-            const baseProgress = roundElapsed / 10000;
+            const baseProgress = roundElapsed / 13000;
             ref.ghosts.forEach((g, i) => {
               const startOffset = i * 2;
               g.y = baseProgress * 90 - 8 + startOffset;
@@ -206,7 +217,7 @@
               if (hitBullets.has(b.id) || hitGhosts.has(g.id)) return;
               const dx = Math.abs(b.x - g.x);
               const dy = Math.abs(b.y - g.y);
-              if (dx < 6 && dy < 7 && g.y > -2 && g.y < 92) {
+              if (dx < 6.3 && dy < 7.4 && g.y > -2 && g.y < 92) {
                 hitBullets.add(b.id);
                 hitGhosts.add(g.id);
                 if (g.isTarget) targetHit = true;
@@ -271,7 +282,7 @@
 
           if (ref.roundActive) {
             const roundElapsed = now - ref.roundStartTime;
-            if (roundElapsed > 10500) {
+            if (roundElapsed > 13500) {
               ref.roundActive = false;
               ref.feedback = 'timeout';
               ref.lives -= 1;
@@ -380,8 +391,12 @@
 
                 <div
                   ref={shooterContainerRef}
-                  className="relative w-full h-[420px] md:h-[460px] rounded-2xl overflow-hidden border-4 border-slate-800 shadow-inner"
+                  onMouseMove={handleShooterDrag}
+                  onTouchStart={(e) => { e.preventDefault(); handleShooterDrag(e); }}
+                  onTouchMove={(e) => { e.preventDefault(); handleShooterDrag(e); }}
+                  className="relative w-full h-[420px] md:h-[460px] rounded-2xl overflow-hidden border-4 border-slate-800 shadow-inner cursor-none"
                   style={{
+                    touchAction: 'none',
                     background: 'linear-gradient(180deg, #0f172a 0%, #312e81 35%, #581c87 70%, #1e1b4b 100%)'
                   }}
                 >
@@ -422,7 +437,8 @@
                     <div key={g.id}
                       className="absolute z-20 pointer-events-none"
                       style={{ left: `${g.x}%`, top: `${g.y}%`, transform: 'translateX(-50%)' }}>
-                      <div className="relative flex flex-col items-center">
+                      {/* 整體再放大 5% (含字卡)，提高目標可辨識度 */}
+                      <div className="relative flex flex-col items-center" style={{ transform: 'scale(1.05)', transformOrigin: 'top center' }}>
                         <span className="text-5xl md:text-6xl drop-shadow-[0_0_10px_rgba(200,220,255,0.6)]" style={{ filter: 'grayscale(0.2)' }}>👻</span>
                         <span className="absolute top-3 md:top-4 left-1/2 -translate-x-1/2 text-lg md:text-xl font-black text-slate-900 bg-yellow-200 rounded-full w-8 h-8 md:w-9 md:h-9 flex items-center justify-center border-2 border-yellow-500 shadow-md">
                           {g.char}
@@ -526,7 +542,7 @@
                 </div>
 
                 <p className="text-xs md:text-sm text-slate-500 mt-2 text-center">
-                  ⬅ ➡ 按住可連續移動 · 按 🔥 發射砲彈 · 射中目標字幽靈得分，射中 💖 補血！
+                  ⬅ ➡ 按住可連續移動，也可直接用手指/滑鼠在遊戲區拖動戰鬥機 · 按 🔥 發射砲彈 · 射中 💖 補血！
                 </p>
               </div>
             )}
