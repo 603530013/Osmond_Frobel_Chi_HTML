@@ -1,0 +1,23 @@
+/* 題庫 K1B-2：透過 <script src> 預載到 window.WORD_DATA，可在 file:// 直接執行 */
+window.WORD_DATA = window.WORD_DATA || {};
+window.WORD_DATA["K1B-2"] = {
+  id: "K1B-2",
+  words: [
+    { id: "old",     char: "老", icon: "👴",     color: "bg-indigo-100 text-indigo-600",   label: "老人" },
+    { id: "teacher", char: "師", icon: "🧑‍🏫", color: "bg-purple-100 text-purple-600",   label: "老師" },
+    { id: "soil",    char: "土", type: "custom-soil", color: "bg-yellow-200 text-yellow-900", label: "泥土" },
+    { id: "person",  char: "人", icon: "🚶",     color: "bg-teal-100 text-teal-600",       label: "人類" },
+    { id: "sleep",   char: "睡", icon: "🛌",     color: "bg-blue-200 text-blue-800",       label: "睡美人" },
+    { id: "circle",  char: "圓", icon: "⭕",     color: "bg-red-100 text-red-600",         label: "圓形" },
+    { id: "grass",   char: "草", icon: "🌿",     color: "bg-green-100 text-green-700",     label: "草地" },
+    { id: "rice",    char: "飯", icon: "🍚",     color: "bg-stone-100 text-stone-700",     label: "吃飯" },
+    { id: "pudding", char: "布", icon: "🍮",     color: "bg-yellow-100 text-yellow-700",   label: "布丁" },
+    { id: "trophy",  char: "杯", icon: "🏆",     color: "bg-amber-100 text-amber-600",     label: "獎杯" },
+    { id: "bird",    char: "鳥", icon: "🐦",     color: "bg-sky-100 text-sky-700",         label: "小鳥" },
+    { id: "crow",    char: "烏", icon: "🐦‍⬛", color: "bg-zinc-200 text-zinc-800",       label: "烏鴉" },
+    { id: "red",       char: "紅", icon: "💄",     color: "bg-rose-100 text-rose-700",       label: "口紅" },
+    { id: "story",     char: "故", type: "custom-story-book", color: "bg-orange-100 text-orange-700", label: "故事書" },
+    { id: "briefcase", char: "事", icon: "💼",     color: "bg-slate-100 text-slate-700",     label: "公事包" },
+    { id: "book",      char: "書", icon: "📖",     color: "bg-cyan-100 text-cyan-700",       label: "書本" }
+  ]
+};

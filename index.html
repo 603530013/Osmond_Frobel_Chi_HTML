@@ -8,6 +8,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
 
   <link rel="stylesheet" href="shared/styles.css">
+
+  <!-- 題庫資料 (將 words 設定到 window.WORD_DATA) -->
+  <script src="data/K1B-1.js"></script>
+  <script src="data/K1B-2.js"></script>
 </head>
 <body class="bg-slate-50 font-sans select-none">
 
@@ -77,30 +81,18 @@
 
   </div>
 
-  <!-- 題庫字數動態載入：抓 data/<id>.json 的 words.length，避免每次新增字都要改首頁 -->
+  <!-- 題庫字數動態顯示：直接讀 window.WORD_DATA (由 head 中的 <script src> 預載) -->
   <script>
-    (async () => {
-      // 設定要列出的題庫 ID（與 shared/common.js 的 AVAILABLE_SET_IDS 對應）
+    (function () {
       const SET_IDS = ['K1B-1', 'K1B-2'];
       const summaryEl = document.getElementById('set-summary');
-      try {
-        const results = await Promise.all(SET_IDS.map(async (id) => {
-          try {
-            const r = await fetch(`data/${id}.json`);
-            if (!r.ok) return { id, count: null };
-            const d = await r.json();
-            return { id, count: Array.isArray(d.words) ? d.words.length : 0 };
-          } catch (e) {
-            return { id, count: null };
-          }
-        }));
-        const text = results
-          .map(r => r.count == null ? `${r.id} (?)` : `${r.id} (${r.count}字)`)
-          .join(' · ');
-        summaryEl.textContent = text;
-      } catch (e) {
-        summaryEl.textContent = '無法載入題庫資訊';
-      }
+      const data = window.WORD_DATA || {};
+      const text = SET_IDS.map(id => {
+        const set = data[id];
+        const count = set && Array.isArray(set.words) ? set.words.length : null;
+        return count == null ? `${id} (?)` : `${id} (${count}字)`;
+      }).join(' · ');
+      summaryEl.textContent = text || '無題庫';
     })();
   </script>
 

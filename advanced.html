@@ -11,12 +11,18 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
   <link rel="stylesheet" href="shared/styles.css">
+
+  <!-- 題庫資料 (將 words 設定到 window.WORD_DATA) -->
+  <script src="data/K1B-1.js"></script>
+  <script src="data/K1B-2.js"></script>
+  <!-- 共用元件 (預編譯好的，無 JSX) -->
+  <script src="shared/common.js"></script>
 </head>
 <body class="bg-slate-50 font-sans select-none">
 
   <div id="root"></div>
 
-  <script type="text/plain" id="app-src">
+  <script type="text/babel">
     const { useState, useEffect } = React;
 
     const App = () => {
@@ -185,35 +191,6 @@
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
-  </script>
-
-  <!-- Bootstrap：抓取 common.js，與上方 app-src 合併後一次編譯注入 -->
-  <script>
-    (async () => {
-      const rootEl = document.getElementById('root');
-      const showErr = (msg) => {
-        rootEl.innerHTML =
-          '<div style="padding:2rem;color:#b91c1c;font-family:sans-serif;max-width:640px;margin:4rem auto;background:#fef2f2;border:2px solid #fecaca;border-radius:12px;">' +
-          '<h2 style="margin:0 0 .75rem 0;">啟動錯誤</h2>' +
-          '<p style="margin:0 0 .75rem 0;">' + msg + '</p>' +
-          '<p style="margin:0;color:#7f1d1d;font-size:.9rem;">請用本機 HTTP 伺服器開啟（例如於資料夾執行 <code>python -m http.server</code> 後訪問 <code>http://localhost:8000/</code>），不要直接用 file:// 雙擊 HTML。</p>' +
-          '</div>';
-      };
-      try {
-        const resp = await fetch('shared/common.js');
-        if (!resp.ok) throw new Error('無法載入 shared/common.js (HTTP ' + resp.status + ')');
-        const commonSrc = await resp.text();
-        const appSrc = document.getElementById('app-src').textContent;
-        const combined = commonSrc + '\n;\n' + appSrc;
-        const { code } = Babel.transform(combined, { presets: ['react'] });
-        const s = document.createElement('script');
-        s.textContent = code;
-        document.head.appendChild(s);
-      } catch (e) {
-        console.error('Bootstrap error:', e);
-        showErr(e.message || String(e));
-      }
-    })();
   </script>
 </body>
 </html>
